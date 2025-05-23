@@ -37,3 +37,4 @@ def send_confirmation_email(email, order):
 
 if __name__ == '__main__':
   logger.info('Client for email service.')
+# COMPLETED

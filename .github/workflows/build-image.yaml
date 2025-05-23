@@ -88,10 +88,25 @@ jobs:
           IMAGE_LATEST=$DOCKER_USER/$NAME:latest
           IMAGE_SHA=$DOCKER_USER/$NAME:${GITHUB_SHA::7}
 
+          DOCKERFILE_PATH="$SERVICE/Dockerfile"
+          CONTEXT_PATH="$SERVICE"
+
+          # Check if Dockerfile exists in service root; if not, look inside nested src folder
+          if [ ! -f "$DOCKERFILE_PATH" ]; then
+            DOCKERFILE_PATH="$SERVICE/src/Dockerfile"
+            CONTEXT_PATH="$SERVICE/src"
+          fi
+
+          if [ ! -f "$DOCKERFILE_PATH" ]; then
+            echo "❌ Dockerfile not found for $SERVICE"
+            exit 1
+          fi
+
           docker buildx build \
             --cache-from=type=local,src=/tmp/.buildx-cache \
             --cache-to=type=local,dest=/tmp/.buildx-cache-new \
             --push \
+            -f "$DOCKERFILE_PATH" \
             -t $IMAGE_LATEST \
             -t $IMAGE_SHA \
-            $SERVICE
+            "$CONTEXT_PATH"

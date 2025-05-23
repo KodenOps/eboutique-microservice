@@ -1,4 +1,5 @@
 name: Build docker Image
+
 on:
   push:
     paths:
@@ -14,7 +15,8 @@ on:
       - 'recommendservice/**'
       - 'shippingservice/**'
       - 'shoppingassistantservice/**'
-job:
+
+jobs:
   detect-changes:
     runs-on: ubuntu-latest
     outputs:
@@ -22,10 +24,11 @@ job:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
       - name: Detect Changed Microservices
         id: set-matrix
         run: |
-          changed=$(git diff --name-only ${{ github.event.before }}) ${{ github.sha }}
+          changed=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})
           services=()
           for dir in frontend cartservice checkoutservice currencyservice emailservice adservice loadgenerator paymentservice productcatalogservice recommendservice shippingservice shoppingassistantservice; do
             if echo "$changed" | grep -q "^$dir/"; then
@@ -38,6 +41,7 @@ job:
           fi
           matrix+="]}"
           echo "services=$matrix" >> $GITHUB_OUTPUT
+
   build-and-push:
     needs: detect-changes
     if: needs.detect-changes.outputs.services != '{"include":[]}'
@@ -56,6 +60,7 @@ job:
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.CICD_DOCKERHUB }}
+
       - name: Build and Push Docker Image
         run: |
           SERVICE=${{ matrix.include }}

@@ -3,18 +3,18 @@ name: Build Docker Image
 on:
   push:
     paths:
-      - 'frontend/**'
-      - 'cartservice/**'
-      - 'checkoutservice/**'
-      - 'currencyservice/**'
-      - 'emailservice/**'
-      - 'adservice/**'
-      - 'loadgenerator/**'
-      - 'paymentservice/**'
-      - 'productcatalogservice/**'
-      - 'recommendservice/**'
-      - 'shippingservice/**'
-      - 'shoppingassistantservice/**'
+      - 'src/frontend/**'
+      - 'src/cartservice/**'
+      - 'src/checkoutservice/**'
+      - 'src/currencyservice/**'
+      - 'src/emailservice/**'
+      - 'src/adservice/**'
+      - 'src/loadgenerator/**'
+      - 'src/paymentservice/**'
+      - 'src/productcatalogservice/**'
+      - 'src/recommendservice/**'
+      - 'src/shippingservice/**'
+      - 'src/shoppingassistantservice/**'
 
 jobs:
   detect-changes:

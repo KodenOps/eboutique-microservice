@@ -52,3 +52,6 @@ ENV DOTNET_EnableDiagnostics=0 \
     ASPNETCORE_HTTP_PORTS=7070
 USER 1000
 ENTRYPOINT ["/app/cartservice"]
+
+# completed
+

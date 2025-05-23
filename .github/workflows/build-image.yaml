@@ -33,19 +33,25 @@ jobs:
           git diff --name-only ${{ github.event.before }} ${{ github.sha }}
 
           changed=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})
+          echo "Changed files: $changed"
+
           services=()
           for dir in src/frontend src/cartservice src/checkoutservice src/currencyservice src/emailservice src/adservice src/loadgenerator src/paymentservice src/productcatalogservice src/recommendservice src/shippingservice src/shoppingassistantservice; do
             if echo "$changed" | grep -q "^$dir/"; then
-              services+=("\"$dir\"")
+              services+=("{\"service\":\"$dir\"}")
             fi
           done
+
+          echo "Detected services: ${services[*]}"
+
           matrix="{\"include\":["
           if [ ${#services[@]} -gt 0 ]; then
             matrix+=$(IFS=, ; echo "${services[*]}")
           fi
           matrix+="]}"
-          echo "services=$matrix"
+          echo "Matrix: $matrix"
           echo "services=$matrix" >> $GITHUB_OUTPUT
+
 
 
   build-and-push:

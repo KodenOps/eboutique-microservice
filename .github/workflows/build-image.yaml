@@ -74,8 +74,11 @@ jobs:
           password: ${{ secrets.CICD_DOCKERHUB }}
 
       - name: Build and Push Docker Image
+        env:
+          SERVICE: ${{ matrix.service }}
+          DOCKER_USER: ${{ secrets.DOCKER_USERNAME }}
         run: |
-          SERVICE=${{ matrix.include }}
-          IMAGE_NAME=${{ secrets.DOCKER_USERNAME }}/$SERVICE:latest
-          docker build -t $IMAGE_NAME ./$SERVICE
+          echo "Building and pushing service: $SERVICE"
+          IMAGE_NAME=$DOCKER_USER/$(basename $SERVICE):latest
+          docker build -t $IMAGE_NAME $SERVICE
           docker push $IMAGE_NAME

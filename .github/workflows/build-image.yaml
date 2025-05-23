@@ -1,0 +1,64 @@
+name: Build docker Image
+on:
+  push:
+    paths:
+      - 'frontend/**'
+      - 'cartservice/**'
+      - 'checkoutservice/**'
+      - 'currencyservice/**'
+      - 'emailservice/**'
+      - 'adservice/**'
+      - 'loadgenerator/**'
+      - 'paymentservice/**'
+      - 'productcatalogservice/**'
+      - 'recommendservice/**'
+      - 'shippingservice/**'
+      - 'shoppingassistantservice/**'
+job:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.set-matrix.outputs.services }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Detect Changed Microservices
+        id: set-matrix
+        run: |
+          changed=$(git diff --name-only ${{ github.event.before }}) ${{ github.sha }}
+          services=()
+          for dir in frontend cartservice checkoutservice currencyservice emailservice adservice loadgenerator paymentservice productcatalogservice recommendservice shippingservice shoppingassistantservice; do
+            if echo "$changed" | grep -q "^$dir/"; then
+              services+=("\"$dir\"")
+            fi
+          done
+          matrix="{\"include\":["
+          if [ ${#services[@]} -gt 0 ]; then
+            matrix+=$(IFS=, ; echo "${services[*]}")
+          fi
+          matrix+="]}"
+          echo "services=$matrix" >> $GITHUB_OUTPUT
+  build-and-push:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.services != '{"include":[]}'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJson(needs.detect-changes.outputs.services) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.CICD_DOCKERHUB }}
+      - name: Build and Push Docker Image
+        run: |
+          SERVICE=${{ matrix.include }}
+          IMAGE_NAME=${{ secrets.DOCKER_USERNAME }}/$SERVICE:latest
+          docker build -t $IMAGE_NAME ./$SERVICE
+          docker push $IMAGE_NAME

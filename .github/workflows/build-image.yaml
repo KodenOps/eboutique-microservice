@@ -51,9 +51,6 @@ jobs:
           matrix+="]}"
           echo "Matrix: $matrix"
           echo "services=$matrix" >> $GITHUB_OUTPUT
-
-
-
   build-and-push:
     needs: detect-changes
     if: needs.detect-changes.outputs.services != '{"include":[]}'
@@ -67,6 +64,14 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ matrix.service }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-${{ matrix.service }}-
+
       - name: Log in to DockerHub
         uses: docker/login-action@v3
         with:
@@ -79,6 +84,21 @@ jobs:
           DOCKER_USER: ${{ secrets.DOCKER_USERNAME }}
         run: |
           echo "Building and pushing service: $SERVICE"
-          IMAGE_NAME=$DOCKER_USER/$(basename $SERVICE):latest
-          docker build -t $IMAGE_NAME $SERVICE
-          docker push $IMAGE_NAME
+          NAME=$(basename $SERVICE)
+          IMAGE_LATEST=$DOCKER_USER/$NAME:latest
+          IMAGE_SHA=$DOCKER_USER/$NAME:${GITHUB_SHA::7}
+
+          docker buildx build \
+            --cache-from=type=local,src=/tmp/.buildx-cache \
+            --cache-to=type=local,dest=/tmp/.buildx-cache-new \
+            -t $IMAGE_LATEST \
+            -t $IMAGE_SHA \
+            $SERVICE
+
+          docker push $IMAGE_LATEST
+          docker push $IMAGE_SHA
+
+      - name: Move new cache into place
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache

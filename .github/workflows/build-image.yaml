@@ -91,6 +91,7 @@ jobs:
           docker buildx build \
             --cache-from=type=local,src=/tmp/.buildx-cache \
             --cache-to=type=local,dest=/tmp/.buildx-cache-new \
+            --push \
             -t $IMAGE_LATEST \
             -t $IMAGE_SHA \
             $SERVICE

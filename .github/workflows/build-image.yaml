@@ -29,9 +29,12 @@ jobs:
       - name: Detect Changed Microservices
         id: set-matrix
         run: |
+          echo "Changed files:"
+          git diff --name-only ${{ github.event.before }} ${{ github.sha }}
+
           changed=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})
           services=()
-          for dir in frontend cartservice checkoutservice currencyservice emailservice adservice loadgenerator paymentservice productcatalogservice recommendservice shippingservice shoppingassistantservice; do
+          for dir in src/frontend src/cartservice src/checkoutservice src/currencyservice src/emailservice src/adservice src/loadgenerator src/paymentservice src/productcatalogservice src/recommendservice src/shippingservice src/shoppingassistantservice; do
             if echo "$changed" | grep -q "^$dir/"; then
               services+=("\"$dir\"")
             fi
@@ -41,7 +44,9 @@ jobs:
             matrix+=$(IFS=, ; echo "${services[*]}")
           fi
           matrix+="]}"
+          echo "services=$matrix"
           echo "services=$matrix" >> $GITHUB_OUTPUT
+
 
   build-and-push:
     needs: detect-changes

@@ -25,8 +25,13 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	"go.elastic.co/apm"
 	"go.elastic.co/apm/module/apmhttp"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"google.golang.org/grpc"
 )
 
@@ -85,8 +90,6 @@ type frontendServer struct {
 
 func main() {
 	ctx := context.Background()
-
-	// Setup structured logging
 	log := logrus.New()
 	log.Level = logrus.DebugLevel
 	log.Formatter = &logrus.JSONFormatter{
@@ -99,36 +102,33 @@ func main() {
 	}
 	log.Out = os.Stdout
 
-	// Initialize Elastic APM agent BEFORE you create HTTP server
-	// Elastic APM config is read from environment variables like:
-	// - ELASTIC_APM_SERVICE_NAME (e.g., "frontend")
-	// - ELASTIC_APM_SERVER_URL (e.g., "http://apm-server:8200")
-	// - ELASTIC_APM_SECRET_TOKEN (if your server requires it)
-	// - ELASTIC_APM_ENVIRONMENT (optional)
-	// - ELASTIC_APM_METRICS_INTERVAL (e.g., "10s")
-	//
-	// You can also set ELASTIC_APM_LOG_LEVEL=debug to troubleshoot
-	if apm.DefaultTracer == nil {
-		panic("elastic apm tracer not initialized")
-	}
-	// The DefaultTracer is automatically initialized when imported.
-	// Just ensure your env vars are set before running.
-
 	svc := new(frontendServer)
 
+	otel.SetTextMapPropagator(
+		propagation.NewCompositeTextMapPropagator(
+			propagation.TraceContext{}, propagation.Baggage{}))
+
 	baseUrl = os.Getenv("BASE_URL")
+
+	if os.Getenv("ENABLE_TRACING") == "1" {
+		log.Info("Tracing enabled.")
+		initTracing(log, ctx, svc)
+	} else {
+		log.Info("Tracing disabled.")
+	}
+
+	if os.Getenv("ENABLE_PROFILER") == "1" {
+		log.Info("Profiling enabled.")
+		go initProfiling(log, "frontend", "1.0.0")
+	} else {
+		log.Info("Profiling disabled.")
+	}
 
 	srvPort := port
 	if os.Getenv("PORT") != "" {
 		srvPort = os.Getenv("PORT")
 	}
-
 	addr := os.Getenv("LISTEN_ADDR")
-	if addr == "" {
-		addr = "0.0.0.0" // default listen address if not set
-	}
-
-	// Read gRPC service addresses from environment variables
 	mustMapEnv(&svc.productCatalogSvcAddr, "PRODUCT_CATALOG_SERVICE_ADDR")
 	mustMapEnv(&svc.currencySvcAddr, "CURRENCY_SERVICE_ADDR")
 	mustMapEnv(&svc.cartSvcAddr, "CART_SERVICE_ADDR")
@@ -138,7 +138,6 @@ func main() {
 	mustMapEnv(&svc.adSvcAddr, "AD_SERVICE_ADDR")
 	mustMapEnv(&svc.shoppingAssistantSvcAddr, "SHOPPING_ASSISTANT_SERVICE_ADDR")
 
-	// Connect gRPC clients
 	mustConnGRPC(ctx, &svc.currencySvcConn, svc.currencySvcAddr)
 	mustConnGRPC(ctx, &svc.productCatalogSvcConn, svc.productCatalogSvcAddr)
 	mustConnGRPC(ctx, &svc.cartSvcConn, svc.cartSvcAddr)
@@ -147,7 +146,6 @@ func main() {
 	mustConnGRPC(ctx, &svc.checkoutSvcConn, svc.checkoutSvcAddr)
 	mustConnGRPC(ctx, &svc.adSvcConn, svc.adSvcAddr)
 
-	// Setup router with your handlers
 	r := mux.NewRouter()
 	r.HandleFunc(baseUrl+"/", svc.homeHandler).Methods(http.MethodGet, http.MethodHead)
 	r.HandleFunc(baseUrl+"/product/{id}", svc.productHandler).Methods(http.MethodGet, http.MethodHead)
@@ -164,15 +162,58 @@ func main() {
 	r.HandleFunc(baseUrl+"/product-meta/{ids}", svc.getProductByID).Methods(http.MethodGet)
 	r.HandleFunc(baseUrl+"/bot", svc.chatBotHandler).Methods(http.MethodPost)
 
-	// Wrap router with Elastic APM middleware to instrument HTTP requests
+	// Wrap router with Elastic APM middleware
 	var handler http.Handler = apmhttp.Wrap(r)
 
-	// Add logging middleware and session ID middleware as before
+	// Add logging and session middleware
 	handler = &logHandler{log: log, next: handler}
 	handler = ensureSessionID(handler)
 
-	log.Infof("starting server on %s:%s", addr, srvPort)
+	// Add OpenTelemetry HTTP middleware for tracing (optional if you want both)
+	handler = otelhttp.NewHandler(handler, "frontend")
+
+	log.Infof("starting server on " + addr + ":" + srvPort)
 	log.Fatal(http.ListenAndServe(addr+":"+srvPort, handler))
+}
+
+func initStats(log logrus.FieldLogger) {
+	// TODO(arbrown) Implement OpenTelemetry stats
+}
+
+func initTracing(log logrus.FieldLogger, ctx context.Context, svc *frontendServer) (*sdktrace.TracerProvider, error) {
+	mustMapEnv(&svc.collectorAddr, "COLLECTOR_SERVICE_ADDR")
+	mustConnGRPC(ctx, &svc.collectorConn, svc.collectorAddr)
+	exporter, err := otlptracegrpc.New(
+		ctx,
+		otlptracegrpc.WithGRPCConn(svc.collectorConn))
+	if err != nil {
+		log.Warnf("warn: Failed to create trace exporter: %v", err)
+	}
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exporter),
+		sdktrace.WithSampler(sdktrace.AlwaysSample()))
+	otel.SetTracerProvider(tp)
+
+	return tp, err
+}
+
+func initProfiling(log logrus.FieldLogger, service, version string) {
+	for i := 1; i <= 3; i++ {
+		log = log.WithField("retry", i)
+		if err := profiler.Start(profiler.Config{
+			Service:        service,
+			ServiceVersion: version,
+		}); err != nil {
+			log.Warnf("warn: failed to start profiler: %+v", err)
+		} else {
+			log.Info("started Stackdriver profiler")
+			return
+		}
+		d := time.Second * 10 * time.Duration(i)
+		log.Debugf("sleeping %v to retry initializing Stackdriver profiler", d)
+		time.Sleep(d)
+	}
+	log.Warn("warning: could not initialize Stackdriver profiler after retrying, giving up")
 }
 
 func mustMapEnv(target *string, envKey string) {
@@ -189,33 +230,9 @@ func mustConnGRPC(ctx context.Context, conn **grpc.ClientConn, addr string) {
 	defer cancel()
 	*conn, err = grpc.DialContext(ctx, addr,
 		grpc.WithInsecure(),
-		grpc.WithUnaryInterceptor(), // No OTel here, just pure gRPC
-		grpc.WithStreamInterceptor())
+		grpc.WithUnaryInterceptor(otelgrpc.UnaryClientInterceptor()),
+		grpc.WithStreamInterceptor(otelgrpc.StreamClientInterceptor()))
 	if err != nil {
 		panic(errors.Wrapf(err, "grpc: failed to connect %s", addr))
 	}
 }
-
-// Below are your handler method stubs.
-// Implement these handlers in your codebase.
-
-func (s *frontendServer) homeHandler(w http.ResponseWriter, r *http.Request)          {}
-func (s *frontendServer) productHandler(w http.ResponseWriter, r *http.Request)       {}
-func (s *frontendServer) viewCartHandler(w http.ResponseWriter, r *http.Request)      {}
-func (s *frontendServer) addToCartHandler(w http.ResponseWriter, r *http.Request)     {}
-func (s *frontendServer) emptyCartHandler(w http.ResponseWriter, r *http.Request)     {}
-func (s *frontendServer) setCurrencyHandler(w http.ResponseWriter, r *http.Request)   {}
-func (s *frontendServer) logoutHandler(w http.ResponseWriter, r *http.Request)        {}
-func (s *frontendServer) placeOrderHandler(w http.ResponseWriter, r *http.Request)    {}
-func (s *frontendServer) assistantHandler(w http.ResponseWriter, r *http.Request)     {}
-func (s *frontendServer) getProductByID(w http.ResponseWriter, r *http.Request)       {}
-func (s *frontendServer) chatBotHandler(w http.ResponseWriter, r *http.Request)       {}
-
-// Middleware types for logging and session - implement as you had previously
-
-type logHandler struct {
-	log  *logrus.Logger
-	next http.Handler
-}
-
-func (h *logHandler) ServeHTTP

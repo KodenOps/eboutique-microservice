@@ -15,6 +15,7 @@ on:
       - 'src/recommendservice/**'
       - 'src/shippingservice/**'
       - 'src/shoppingassistantservice/**'
+      - 'release/**'
 
 jobs:
   detect-changes:
